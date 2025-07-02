@@ -11,9 +11,15 @@ import employeeRoutes from './routes/employeeRoutes.js';
 import departmentRoutes from './routes/departmentRoutes.js';
 import leaveRoutes from './routes/leaveRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
+import performanceRoutes from './routes/performanceRoutes.js';
+import notificationRoutes from './routes/notificationRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 
 // Import middleware
 import { errorHandler } from './middlewares/errorHandler.js';
+
+// Import utilities
+import { startCronJobs } from './utils/cronJobs.js';
 
 // Load environment variables
 dotenv.config();
@@ -42,10 +48,18 @@ app.use('/api/employees', employeeRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/performance', performanceRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Employee Management System API is running' });
+  res.json({ 
+    status: 'OK', 
+    message: 'Employee Management System API is running',
+    timestamp: new Date().toISOString(),
+    version: '2.0.0'
+  });
 });
 
 // Error handling middleware
@@ -61,12 +75,16 @@ mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
-
 .then(() => {
   console.log('Connected to MongoDB');
+  
+  // Start cron jobs after database connection
+  startCronJobs();
+  
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV}`);
+    console.log(`Frontend URL: ${process.env.FRONTEND_URL}`);
   });
 })
 .catch((error) => {

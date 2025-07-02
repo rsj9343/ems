@@ -4,15 +4,19 @@ import {
   getEmployeeById,
   createEmployee,
   updateEmployee,
+  uploadEmployeeAvatar,
+  uploadEmployeeDocument,
   deleteEmployee,
-  getEmployeeStats
+  getEmployeeStats,
+  createEmployeeUser
 } from '../controllers/employeeController.js';
-import { authenticate, requireAdmin } from '../middlewares/auth.js';
+import { authenticate, requireAdmin, requirePermission } from '../middlewares/auth.js';
 import { 
   validateEmployee, 
   validateId, 
   validateEmployeeQuery 
 } from '../middlewares/validation.js';
+import { upload, uploadDocument } from '../config/cloudinary.js';
 
 const router = express.Router();
 
@@ -20,21 +24,30 @@ const router = express.Router();
 router.use(authenticate);
 
 // Get all employees with filtering and pagination
-router.get('/', validateEmployeeQuery, getAllEmployees);
+router.get('/', requirePermission('view_employees'), validateEmployeeQuery, getAllEmployees);
 
-// Get employee statistics (admin only)
-router.get('/stats', requireAdmin, getEmployeeStats);
+// Get employee statistics (admin/hr only)
+router.get('/stats', requirePermission('view_reports'), getEmployeeStats);
 
 // Get employee by ID
-router.get('/:id', validateId, getEmployeeById);
+router.get('/:id', requirePermission('view_employees'), validateId, getEmployeeById);
 
-// Create new employee (admin only)
-router.post('/', requireAdmin, validateEmployee, createEmployee);
+// Create new employee (admin/hr only)
+router.post('/', requirePermission('create_employees'), validateEmployee, createEmployee);
 
-// Update employee (admin only)
-router.put('/:id', requireAdmin, validateId, validateEmployee, updateEmployee);
+// Update employee (admin/hr only)
+router.put('/:id', requirePermission('edit_employees'), validateId, validateEmployee, updateEmployee);
+
+// Upload employee avatar
+router.post('/:id/avatar', requirePermission('edit_employees'), validateId, upload.single('avatar'), uploadEmployeeAvatar);
+
+// Upload employee document
+router.post('/:id/documents', requirePermission('edit_employees'), validateId, uploadDocument.single('document'), uploadEmployeeDocument);
+
+// Create user account for employee
+router.post('/:id/create-user', requireAdmin, validateId, createEmployeeUser);
 
 // Delete employee (admin only)
-router.delete('/:id', requireAdmin, validateId, deleteEmployee);
+router.delete('/:id', requirePermission('delete_employees'), validateId, deleteEmployee);
 
 export default router;

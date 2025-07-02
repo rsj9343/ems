@@ -11,7 +11,7 @@ export const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
+    const user = await User.findById(decoded.userId).select('-password').populate('employee');
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid token. User not found.' });
@@ -19,6 +19,10 @@ export const authenticate = async (req, res, next) => {
 
     if (!user.isActive) {
       return res.status(401).json({ message: 'Account is deactivated.' });
+    }
+
+    if (user.isLocked) {
+      return res.status(423).json({ message: 'Account is temporarily locked.' });
     }
 
     req.user = user;
@@ -45,6 +49,23 @@ export const requireAdmin = (req, res, next) => {
   next();
 };
 
+// Check if user has specific permission
+export const requirePermission = (permission) => {
+  return (req, res, next) => {
+    if (req.user.role === 'admin') {
+      return next(); // Admins have all permissions
+    }
+
+    if (!req.user.permissions.includes(permission)) {
+      return res.status(403).json({ 
+        message: `Access denied. ${permission} permission required.` 
+      });
+    }
+
+    next();
+  };
+};
+
 // Check if user is admin or the resource owner
 export const requireAdminOrOwner = (req, res, next) => {
   if (req.user.role === 'admin') {
@@ -54,12 +75,24 @@ export const requireAdminOrOwner = (req, res, next) => {
   // For employee role, check if they're accessing their own data
   const resourceEmployeeId = req.params.employeeId || req.body.employee;
   
-  if (req.user.employeeId && 
-      req.user.employeeId.toString() === resourceEmployeeId) {
+  if (req.user.employee && 
+      req.user.employee._id.toString() === resourceEmployeeId) {
     return next();
   }
 
   return res.status(403).json({ message: 'Access denied. Insufficient privileges.' });
+};
+
+// Check multiple roles
+export const requireRoles = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ 
+        message: `Access denied. One of these roles required: ${roles.join(', ')}` 
+      });
+    }
+    next();
+  };
 };
 
 // Optional authentication (for public/private routes)
@@ -69,9 +102,9 @@ export const optionalAuth = async (req, res, next) => {
 
     if (token) {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId).select('-password');
+      const user = await User.findById(decoded.userId).select('-password').populate('employee');
       
-      if (user && user.isActive) {
+      if (user && user.isActive && !user.isLocked) {
         req.user = user;
       }
     }

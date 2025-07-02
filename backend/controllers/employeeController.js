@@ -1,6 +1,8 @@
 import Employee from '../models/Employee.js';
+import User from '../models/User.js';
 import Department from '../models/Department.js';
 import { validationResult } from 'express-validator';
+import { sendEmail } from '../utils/emailService.js';
 
 // Get all employees with filtering and pagination
 export const getAllEmployees = async (req, res) => {
@@ -12,7 +14,9 @@ export const getAllEmployees = async (req, res) => {
       department = '',
       status = '',
       sortBy = 'name',
-      sortOrder = 'asc'
+      sortOrder = 'asc',
+      employmentType = '',
+      workLocation = ''
     } = req.query;
 
     // Build filter object
@@ -27,13 +31,10 @@ export const getAllEmployees = async (req, res) => {
       ];
     }
 
-    if (department) {
-      filter.department = department;
-    }
-
-    if (status) {
-      filter.status = status;
-    }
+    if (department) filter.department = department;
+    if (status) filter.status = status;
+    if (employmentType) filter.employmentType = employmentType;
+    if (workLocation) filter.workLocation = workLocation;
 
     // Build sort object
     const sort = {};
@@ -42,7 +43,8 @@ export const getAllEmployees = async (req, res) => {
     // Execute query with pagination
     const employees = await Employee.find(filter)
       .populate('department', 'name')
-      .populate('manager', 'name')
+      .populate('manager', 'name employeeId')
+      .populate('user', 'name email role avatar')
       .sort(sort)
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -69,7 +71,9 @@ export const getEmployeeById = async (req, res) => {
   try {
     const employee = await Employee.findById(req.params.id)
       .populate('department')
-      .populate('manager', 'name employeeId');
+      .populate('manager', 'name employeeId')
+      .populate('user', 'name email role avatar preferences')
+      .populate('performanceReviews.reviewer', 'name employeeId');
 
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
@@ -102,8 +106,25 @@ export const createEmployee = async (req, res) => {
     const employee = new Employee(employeeData);
     await employee.save();
 
-    // Optional: populate for response
+    // Populate for response
     await employee.populate('department', 'name');
+
+    // Send welcome email to employee
+    try {
+      await sendEmail(
+        employee.email,
+        'Welcome to the Company!',
+        `
+        <h1>Welcome ${employee.name}!</h1>
+        <p>We're excited to have you join our team as ${employee.position} in the ${department.name} department.</p>
+        <p>Your employee ID is: <strong>${employee.employeeId}</strong></p>
+        <p>Your start date is: ${new Date(employee.dateOfJoining).toLocaleDateString()}</p>
+        <p>Please contact HR if you have any questions.</p>
+        `
+      );
+    } catch (emailError) {
+      console.error('Failed to send welcome email:', emailError);
+    }
 
     res.status(201).json({
       message: 'Employee created successfully',
@@ -150,7 +171,7 @@ export const updateEmployee = async (req, res) => {
       employeeId,
       updateData,
       { new: true, runValidators: true }
-    ).populate('department', 'name').populate('manager', 'name');
+    ).populate('department', 'name').populate('manager', 'name').populate('user');
 
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
@@ -167,14 +188,92 @@ export const updateEmployee = async (req, res) => {
   }
 };
 
-// Delete employee
-export const deleteEmployee = async (req, res) => {
+// Upload employee avatar
+export const uploadEmployeeAvatar = async (req, res) => {
   try {
-    const employee = await Employee.findByIdAndDelete(req.params.id);
+    const employeeId = req.params.id;
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const employee = await Employee.findByIdAndUpdate(
+      employeeId,
+      { avatar: req.file.path },
+      { new: true }
+    );
 
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
     }
+
+    // Also update user avatar if linked
+    if (employee.user) {
+      await User.findByIdAndUpdate(employee.user, { avatar: req.file.path });
+    }
+
+    res.json({
+      message: 'Avatar uploaded successfully',
+      avatar: employee.avatar
+    });
+
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Upload employee document
+export const uploadEmployeeDocument = async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+    const { documentType } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const employee = await Employee.findById(employeeId);
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    const document = {
+      name: req.file.originalname,
+      type: documentType || 'general',
+      url: req.file.path,
+      uploadDate: new Date()
+    };
+
+    employee.documents.push(document);
+    await employee.save();
+
+    res.json({
+      message: 'Document uploaded successfully',
+      document
+    });
+
+  } catch (error) {
+    console.error('Document upload error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Delete employee
+export const deleteEmployee = async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id);
+
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    // If employee has a linked user account, delete it too
+    if (employee.user) {
+      await User.findByIdAndDelete(employee.user);
+    }
+
+    await Employee.findByIdAndDelete(req.params.id);
 
     res.json({ message: 'Employee deleted successfully' });
 
@@ -190,6 +289,7 @@ export const getEmployeeStats = async (req, res) => {
     const totalEmployees = await Employee.countDocuments();
     const activeEmployees = await Employee.countDocuments({ status: 'active' });
     const resignedEmployees = await Employee.countDocuments({ status: 'resigned' });
+    const onLeaveEmployees = await Employee.countDocuments({ status: 'on_leave' });
 
     // Department wise distribution
     const departmentStats = await Employee.aggregate([
@@ -207,7 +307,8 @@ export const getEmployeeStats = async (req, res) => {
       {
         $group: {
           _id: '$department.name',
-          count: { $sum: 1 }
+          count: { $sum: 1 },
+          avgSalary: { $avg: '$salary' }
         }
       },
       {
@@ -215,15 +316,119 @@ export const getEmployeeStats = async (req, res) => {
       }
     ]);
 
+    // Employment type distribution
+    const employmentTypeStats = await Employee.aggregate([
+      {
+        $group: {
+          _id: '$employmentType',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Work location distribution
+    const workLocationStats = await Employee.aggregate([
+      {
+        $group: {
+          _id: '$workLocation',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Average performance rating
+    const avgPerformance = await Employee.aggregate([
+      {
+        $group: {
+          _id: null,
+          avgRating: { $avg: '$performanceRating' }
+        }
+      }
+    ]);
+
     res.json({
       totalEmployees,
       activeEmployees,
       resignedEmployees,
-      departmentStats
+      onLeaveEmployees,
+      departmentStats,
+      employmentTypeStats,
+      workLocationStats,
+      avgPerformanceRating: avgPerformance[0]?.avgRating || 0
     });
 
   } catch (error) {
     console.error('Employee stats error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Create user account for employee
+export const createEmployeeUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email, password, role = 'employee' } = req.body;
+
+    const employee = await Employee.findById(id);
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    if (employee.user) {
+      return res.status(400).json({ message: 'Employee already has a user account' });
+    }
+
+    // Check if email is already taken
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Email already taken' });
+    }
+
+    // Create user account
+    const user = new User({
+      name: employee.name,
+      email,
+      password,
+      role,
+      employee: employee._id
+    });
+
+    await user.save();
+
+    // Link user to employee
+    employee.user = user._id;
+    await employee.save();
+
+    // Send account creation email
+    try {
+      await sendEmail(
+        email,
+        'Your Account Has Been Created',
+        `
+        <h1>Account Created Successfully</h1>
+        <p>Hello ${employee.name},</p>
+        <p>Your user account has been created for the Employee Management System.</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Role:</strong> ${role}</p>
+        <p>You can now log in to the system using your email and the password provided by your administrator.</p>
+        `
+      );
+    } catch (emailError) {
+      console.error('Failed to send account creation email:', emailError);
+    }
+
+    res.status(201).json({
+      message: 'User account created successfully',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+
+  } catch (error) {
+    console.error('Create employee user error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };

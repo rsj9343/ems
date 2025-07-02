@@ -3,8 +3,9 @@ import Employee from '../models/Employee.js';
 import jwt from 'jsonwebtoken';
 import { validationResult } from 'express-validator';
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs'; 
-
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { sendEmail } from '../utils/emailService.js';
 
 // Generate JWT token
 const generateToken = (userId) => {
@@ -29,19 +30,55 @@ export const register = async (req, res) => {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
 
+    // If employeeId is provided, find the employee and link them
+    let employee = null;
+    if (employeeId) {
+      employee = await Employee.findOne({ employeeId });
+      if (!employee) {
+        return res.status(400).json({ message: 'Employee not found with this ID' });
+      }
+      
+      // Check if employee already has a user account
+      if (employee.user) {
+        return res.status(400).json({ message: 'Employee already has a user account' });
+      }
+    }
+
     // Create new user
     const user = new User({
       name,
       email,
       password,
       role: role || 'employee',
-      employeeId: employeeId || null
+      employee: employee ? employee._id : null
     });
 
     await user.save();
 
+    // Link user to employee if employee exists
+    if (employee) {
+      employee.user = user._id;
+      await employee.save();
+    }
+
     // Generate token
     const token = generateToken(user._id);
+
+    // Send welcome email
+    try {
+      await sendEmail(
+        email,
+        'Welcome to Employee Management System',
+        `
+        <h1>Welcome ${name}!</h1>
+        <p>Your account has been created successfully.</p>
+        <p>Role: ${role}</p>
+        <p>You can now log in to the system using your email and password.</p>
+        `
+      );
+    } catch (emailError) {
+      console.error('Failed to send welcome email:', emailError);
+    }
 
     res.status(201).json({
       message: 'User registered successfully',
@@ -50,7 +87,12 @@ export const register = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        employee: employee ? {
+          id: employee._id,
+          employeeId: employee.employeeId,
+          name: employee.name
+        } : null
       }
     });
 
@@ -62,7 +104,6 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    // Validate request input from express-validator
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -71,10 +112,17 @@ export const login = async (req, res) => {
     const { email, password } = req.body;
 
     // Find user by email and populate employee details
-    const user = await User.findOne({ email }).populate('employeeId');
+    const user = await User.findOne({ email }).populate('employee');
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Check if account is locked
+    if (user.isLocked) {
+      return res.status(423).json({ 
+        message: 'Account is temporarily locked due to too many failed login attempts. Please try again later.' 
+      });
     }
 
     // Check if user account is active
@@ -82,17 +130,19 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: 'Account is deactivated' });
     }
 
-    // DEBUG LOGS (remove in production)
-    console.log('Input password:', password);
-    console.log('Stored hashed password:', user.password);
-    console.log('Is user mongoose document:', user instanceof mongoose.Model);
-
     // Compare given password with hashed password
-    const isMatch = await bcrypt.compare(password, user.password);
-    console.log('Password match result:', isMatch);
+    const isMatch = await user.comparePassword(password);
 
     if (!isMatch) {
+      await user.incLoginAttempts();
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Reset login attempts on successful login
+    if (user.loginAttempts > 0) {
+      await user.updateOne({
+        $unset: { loginAttempts: 1, lockUntil: 1 }
+      });
     }
 
     // Update last login timestamp
@@ -111,8 +161,11 @@ export const login = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        employeeId: user.employeeId,
+        permissions: user.permissions,
+        employee: user.employee,
         lastLogin: user.lastLogin,
+        avatar: user.avatar,
+        preferences: user.preferences
       },
     });
 
@@ -126,7 +179,7 @@ export const login = async (req, res) => {
 export const getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
-      .populate('employeeId')
+      .populate('employee')
       .select('-password');
 
     if (!user) {
@@ -144,7 +197,7 @@ export const getProfile = async (req, res) => {
 // Update user profile
 export const updateProfile = async (req, res) => {
   try {
-    const { name, email } = req.body;
+    const { name, email, preferences } = req.body;
     const userId = req.user.id;
 
     // Check if email is already taken by another user
@@ -157,9 +210,14 @@ export const updateProfile = async (req, res) => {
       return res.status(400).json({ message: 'Email already taken' });
     }
 
+    const updateData = { name, email };
+    if (preferences) {
+      updateData.preferences = preferences;
+    }
+
     const user = await User.findByIdAndUpdate(
       userId,
-      { name, email },
+      updateData,
       { new: true, runValidators: true }
     ).select('-password');
 
@@ -170,6 +228,30 @@ export const updateProfile = async (req, res) => {
 
   } catch (error) {
     console.error('Profile update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Upload avatar
+export const uploadAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { avatar: req.file.path },
+      { new: true }
+    ).select('-password');
+
+    res.json({
+      message: 'Avatar uploaded successfully',
+      avatar: user.avatar
+    });
+
+  } catch (error) {
+    console.error('Avatar upload error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -199,6 +281,89 @@ export const changePassword = async (req, res) => {
 
   } catch (error) {
     console.error('Password change error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Forgot password
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found with this email' });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.passwordResetExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    await user.save();
+
+    // Send reset email
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+    
+    try {
+      await sendEmail(
+        user.email,
+        'Password Reset Request',
+        `
+        <h1>Password Reset Request</h1>
+        <p>You requested a password reset. Click the link below to reset your password:</p>
+        <a href="${resetUrl}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a>
+        <p>This link will expire in 10 minutes.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+        `
+      );
+
+      res.json({ message: 'Password reset email sent' });
+    } catch (emailError) {
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      await user.save();
+      
+      return res.status(500).json({ message: 'Error sending email' });
+    }
+
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Reset password
+export const resetPassword = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    // Hash token and find user
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Token is invalid or has expired' });
+    }
+
+    // Update password
+    user.password = password;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.loginAttempts = 0;
+    user.lockUntil = undefined;
+
+    await user.save();
+
+    res.json({ message: 'Password reset successful' });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
