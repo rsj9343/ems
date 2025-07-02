@@ -10,9 +10,13 @@ import DepartmentList from './components/Departments/DepartmentList';
 import DepartmentForm from './components/Departments/DepartmentForm';
 import LeaveList from './components/Leaves/LeaveList';
 import LeaveForm from './components/Leaves/LeaveForm';
+import PerformanceList from './components/Performance/PerformanceList';
+import PerformanceForm from './components/Performance/PerformanceForm';
+import ReportsPage from './components/Reports/ReportsPage';
 import Profile from './components/Profile/Profile';
 import Layout from './components/Layout/Layout';
 import LoadingSpinner from './components/Common/LoadingSpinner';
+import Toast from './components/Common/Toast';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isLoading } = useAuth();
@@ -50,8 +54,16 @@ const AppRoutes: React.FC = () => {
         <Route path="profile" element={<Profile />} />
         
         {/* Employee Management Routes */}
-        <Route path="employees" element={<EmployeeList />} />
-        <Route path="employees/:id" element={<EmployeeDetail />} />
+        <Route path="employees" element={
+          <AdminRoute>
+            <EmployeeList />
+          </AdminRoute>
+        } />
+        <Route path="employees/:id" element={
+          <AdminRoute>
+            <EmployeeDetail />
+          </AdminRoute>
+        } />
         <Route path="employees/new" element={
           <AdminRoute>
             <EmployeeForm />
@@ -64,7 +76,11 @@ const AppRoutes: React.FC = () => {
         } />
         
         {/* Department Management Routes */}
-        <Route path="departments" element={<DepartmentList />} />
+        <Route path="departments" element={
+          <AdminRoute>
+            <DepartmentList />
+          </AdminRoute>
+        } />
         <Route path="departments/new" element={
           <AdminRoute>
             <DepartmentForm />
@@ -80,6 +96,35 @@ const AppRoutes: React.FC = () => {
         <Route path="leaves" element={<LeaveList />} />
         <Route path="leaves/new" element={<LeaveForm />} />
         <Route path="leaves/:id" element={<LeaveForm />} />
+        
+        {/* Performance Management Routes */}
+        <Route path="performance" element={
+          <AdminRoute>
+            <PerformanceList />
+          </AdminRoute>
+        } />
+        <Route path="performance/new" element={
+          <AdminRoute>
+            <PerformanceForm />
+          </AdminRoute>
+        } />
+        <Route path="performance/:id" element={
+          <AdminRoute>
+            <PerformanceForm />
+          </AdminRoute>
+        } />
+        <Route path="performance/:id/edit" element={
+          <AdminRoute>
+            <PerformanceForm />
+          </AdminRoute>
+        } />
+        
+        {/* Reports Routes */}
+        <Route path="reports" element={
+          <AdminRoute>
+            <ReportsPage />
+          </AdminRoute>
+        } />
       </Route>
     </Routes>
   );
@@ -91,6 +136,7 @@ function App() {
       <Router>
         <div className="min-h-screen bg-gray-50">
           <AppRoutes />
+          <Toast />
         </div>
       </Router>
     </AuthProvider>

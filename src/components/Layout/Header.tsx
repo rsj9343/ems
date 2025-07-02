@@ -1,6 +1,7 @@
 import React from 'react';
-import { Menu, Bell, LogOut, User } from 'lucide-react';
+import { Menu, LogOut, User } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import NotificationCenter from '../Notifications/NotificationCenter';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -30,10 +31,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, title }) => {
 
       <div className="flex items-center space-x-4">
         {/* Notifications */}
-        <button className="p-2 text-gray-400 hover:text-gray-500 relative">
-          <Bell className="w-6 h-6" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-        </button>
+        <NotificationCenter />
 
         {/* User menu */}
         <div className="flex items-center space-x-3">
@@ -42,7 +40,15 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, title }) => {
             <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
           </div>
           <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-            <User className="w-5 h-5 text-blue-600" />
+            {user?.avatar ? (
+              <img
+                src={user.avatar}
+                alt={user.name}
+                className="w-8 h-8 rounded-full object-cover"
+              />
+            ) : (
+              <User className="w-5 h-5 text-blue-600" />
+            )}
           </div>
           <button
             onClick={handleLogout}

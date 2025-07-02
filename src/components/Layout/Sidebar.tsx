@@ -7,7 +7,9 @@ import {
   Calendar, 
   User,
   X,
-  Settings
+  Settings,
+  TrendingUp,
+  BarChart3
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -24,6 +26,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { name: 'Employees', href: '/employees', icon: Users, adminOnly: true },
     { name: 'Departments', href: '/departments', icon: Building2, adminOnly: true },
     { name: 'Leaves', href: '/leaves', icon: Calendar, forAll: true },
+    { name: 'Performance', href: '/performance', icon: TrendingUp, adminOnly: true },
+    { name: 'Reports', href: '/reports', icon: BarChart3, adminOnly: true },
     { name: 'Profile', href: '/profile', icon: User, forAll: true },
   ];
 
@@ -83,7 +87,15 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         <div className="flex items-center">
           <div className="flex-shrink-0">
             <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
-              <User className="w-5 h-5 text-gray-600" />
+              {user?.avatar ? (
+                <img
+                  src={user.avatar}
+                  alt={user.name}
+                  className="w-8 h-8 rounded-full object-cover"
+                />
+              ) : (
+                <User className="w-5 h-5 text-gray-600" />
+              )}
             </div>
           </div>
           <div className="ml-3 flex-1 min-w-0">
